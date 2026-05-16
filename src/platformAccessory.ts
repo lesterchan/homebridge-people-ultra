@@ -1,148 +1,387 @@
-import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
+import { Resolver } from 'node:dns/promises';
+import type { Characteristic, PlatformAccessory, Service } from 'homebridge';
+import { Formats, Perms, Units } from '@homebridge/hap-nodejs/dist/lib/Characteristic.js';
 
-import type { ExampleHomebridgePlatform } from './platform.js';
+import arp from 'node-arp';
+import ping from 'ping';
+import find from 'local-devices';
 
-/**
- * Platform Accessory
- * An instance of this class is created for each accessory your platform registers
- * Each accessory may expose multiple services of different service types.
- */
-export class ExamplePlatformAccessory {
-  private service: Service;
+import type { PeopleUltraPlatform } from './platform.js';
 
-  /**
-   * These are just used to create a working example
-   * You should implement your own code to track the state of your accessory
-   */
-  private exampleStates = {
-    On: false,
-    Brightness: 100,
-  };
+export type SensorType = 'motion' | 'occupancy';
+
+export interface PersonDevice {
+  kind: 'person';
+  id: string;
+  name: string;
+  target: string;
+  type: SensorType;
+  threshold: number;
+  pingInterval: number;
+  pingUseArp: boolean;
+  customDns: string[] | false;
+  excludeFromWebhook: boolean;
+  ignoreWebhookReEnter: number;
+}
+
+export interface AggregateDevice {
+  kind: 'aggregate';
+  aggregateType: 'anyone' | 'noone';
+  id: string;
+  name: string;
+  type: SensorType;
+}
+
+export type PeopleUltraDevice = PersonDevice | AggregateDevice;
+
+interface FakeGatoHistoryService extends Service {
+  addEntry(entry: { time: number; status: 0 | 1 }): void;
+  getInitialTime(): number;
+}
+
+interface DeviceContext {
+  device: PeopleUltraDevice;
+}
+
+type CustomCharacteristicConstructor = (new () => Characteristic) & { UUID: string };
+
+const MAC_ADDRESS_PATTERN = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+
+export class PeopleUltraPlatformAccessory {
+  public readonly device: PeopleUltraDevice;
+  public stateCache = false;
+
+  private readonly service: Service;
+  private historyService?: FakeGatoHistoryService;
+  private pollTimeout?: ReturnType<typeof setTimeout>;
 
   constructor(
-    private readonly platform: ExampleHomebridgePlatform,
-    private readonly accessory: PlatformAccessory,
+    private readonly platform: PeopleUltraPlatform,
+    private readonly accessory: PlatformAccessory<DeviceContext>,
   ) {
-    // set accessory information
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+    this.device = accessory.context.device;
+    this.configureAccessoryInformation();
+    this.service = this.configurePrimaryService();
 
-    // get the LightBulb service if it exists, otherwise create a new LightBulb service
-    // you can create multiple services for each accessory
-
-    if (accessory.context.device.CustomService) {
-      // This is only required when using Custom Services and Characteristics not support by HomeKit
-      this.service = this.accessory.getService(this.platform.CustomServices[accessory.context.device.CustomService]) ||
-        this.accessory.addService(this.platform.CustomServices[accessory.context.device.CustomService]);
+    if (this.device.kind === 'person') {
+      this.platform.registerPersonAccessory(this);
+      this.stateCache = this.isActive();
+      this.configureHistoryService();
+      if (this.device.pingInterval > -1) {
+        this.schedulePoll(0);
+      }
     } else {
-      this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
+      this.platform.registerAggregateAccessory(this);
+    }
+  }
+
+  setNewState(newState: boolean) {
+    if (this.device.kind !== 'person' || this.stateCache === newState) {
+      return;
     }
 
-    // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+    this.stateCache = newState;
+    this.updatePrimaryCharacteristic(newState);
+    this.platform.refreshAggregateAccessories();
 
-    // each service must implement at-minimum the "required characteristics" for the given service type
-    // see https://developers.homebridge.io/#/service/Lightbulb
+    if (this.historyService) {
+      this.historyService.addEntry({
+        time: Math.floor(Date.now() / 1000),
+        status: newState ? 1 : 0,
+      });
+    }
 
-    // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.setOn.bind(this)) // SET - bind to the `setOn` method below
-      .onGet(this.getOn.bind(this)); // GET - bind to the `getOn` method below
+    const lastSuccessfulPing = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
+    const lastWebhook = this.platform.storage.getNumber(`lastWebhook_${this.device.target}`);
+    const lastSuccessfulPingDate = lastSuccessfulPing ? new Date(lastSuccessfulPing).toISOString() : 'none';
+    const lastWebhookDate = lastWebhook ? new Date(lastWebhook).toISOString() : 'none';
+    const lookupType = this.device.pingUseArp ? 'arp lookup' : 'ping';
 
-    // register handlers for the Brightness Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.Brightness)
-      .onSet(this.setBrightness.bind(this)); // SET - bind to the `setBrightness` method below
-
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same subtype id.)
-     */
-
-    // Example: add two "motion sensor" services to the accessory
-    const motionSensorOneService = this.accessory.getService('Motion Sensor One Name')
-      || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
-
-    const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name')
-      || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
-    let motionDetected = false;
-    setInterval(() => {
-      // EXAMPLE - inverse the trigger
-      motionDetected = !motionDetected;
-
-      // push the new value to HomeKit
-      motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-      motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-      this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-      this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
-    }, 10000);
+    this.platform.log.info(
+      'Changed occupancy state for %s to %s. Last successful %s %s, last webhook %s.',
+      this.device.target,
+      newState,
+      lookupType,
+      lastSuccessfulPingDate,
+      lastWebhookDate,
+    );
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
-   */
-  async setOn(value: CharacteristicValue) {
-    // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
-
-    this.platform.log.debug('Set Characteristic On ->', value);
+  refreshState() {
+    this.updatePrimaryCharacteristic(this.getStateFromCache());
   }
 
-  /**
-   * Handle the "GET" requests from HomeKit
-   * These are sent when HomeKit wants to know the current state of the accessory, for example, checking if a Light bulb is on.
-   *
-   * GET requests should return as fast as possible. A long delay here will result in
-   * HomeKit being unresponsive and a bad user experience in general.
-   *
-   * If your device takes time to respond you should update the status of your device
-   * asynchronously instead using the `updateCharacteristic` method instead.
-   * In this case, you may decide not to implement `onGet` handlers, which may speed up
-   * the responsiveness of your device in the Home app.
+  private configureAccessoryInformation() {
+    const information = this.accessory.getService(this.platform.Service.AccessoryInformation)
+      || this.accessory.addService(this.platform.Service.AccessoryInformation);
 
-   * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
-   */
-  async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
-
-    this.platform.log.debug('Get Characteristic On ->', isOn);
-
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-
-    return isOn;
+    information
+      .setCharacteristic(this.platform.Characteristic.Name, this.device.name)
+      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'People Ultra')
+      .setCharacteristic(this.platform.Characteristic.Model, this.device.kind === 'person' ? 'Presence Sensor' : 'Aggregate Presence Sensor')
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, `hpu-${this.device.id.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`);
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, changing the Brightness
-   */
-  async setBrightness(value: CharacteristicValue) {
-    // implement your own code to set the brightness
-    this.exampleStates.Brightness = value as number;
+  private configurePrimaryService(): Service {
+    if (this.device.type === 'occupancy') {
+      const staleMotionService = this.accessory.getService(this.platform.Service.MotionSensor);
+      if (staleMotionService) {
+        this.accessory.removeService(staleMotionService);
+      }
 
-    this.platform.log.debug('Set Characteristic Brightness -> ', value);
+      const service = this.accessory.getService(this.platform.Service.OccupancySensor)
+        || this.accessory.addService(this.platform.Service.OccupancySensor, this.device.name);
+      service.setCharacteristic(this.platform.Characteristic.Name, this.device.name);
+      service.getCharacteristic(this.platform.Characteristic.OccupancyDetected)
+        .onGet(() => this.encodeState(this.getStateFromCache()));
+      return service;
+    }
+
+    const staleOccupancyService = this.accessory.getService(this.platform.Service.OccupancySensor);
+    if (staleOccupancyService) {
+      this.accessory.removeService(staleOccupancyService);
+    }
+
+    const service = this.accessory.getService(this.platform.Service.MotionSensor)
+      || this.accessory.addService(this.platform.Service.MotionSensor, this.device.name);
+    service.setCharacteristic(this.platform.Characteristic.Name, this.device.name);
+    service.getCharacteristic(this.platform.Characteristic.MotionDetected)
+      .onGet(() => this.encodeState(this.getStateFromCache()));
+    this.configureEveMotionCharacteristics(service);
+    return service;
+  }
+
+  private configureEveMotionCharacteristics(service: Service) {
+    const Characteristic = this.platform.Characteristic;
+
+    class LastActivationCharacteristic extends Characteristic {
+      static readonly UUID = 'E863F11A-079E-48FF-8F27-9C2605A29F52';
+
+      constructor() {
+        super('LastActivation', LastActivationCharacteristic.UUID, {
+          format: Formats.UINT32,
+          unit: Units.SECONDS,
+          perms: [Perms.PAIRED_READ, Perms.NOTIFY],
+        });
+      }
+    }
+
+    class DurationCharacteristic extends Characteristic {
+      static readonly UUID = 'E863F12D-079E-48FF-8F27-9C2605A29F52';
+
+      constructor() {
+        super('Duration', DurationCharacteristic.UUID, {
+          format: Formats.UINT16,
+          unit: Units.SECONDS,
+          minValue: 5,
+          maxValue: 15 * 3600,
+          validValues: [5, 10, 20, 30, 60, 120, 180, 300, 600, 1200, 1800, 3600, 7200, 10800, 18000, 36000, 43200, 54000],
+          perms: [Perms.PAIRED_READ, Perms.NOTIFY, Perms.PAIRED_WRITE],
+        });
+      }
+    }
+
+    class SensitivityCharacteristic extends Characteristic {
+      static readonly UUID = 'E863F120-079E-48FF-8F27-9C2605A29F52';
+
+      constructor() {
+        super('Sensitivity', SensitivityCharacteristic.UUID, {
+          format: Formats.UINT8,
+          minValue: 0,
+          maxValue: 7,
+          validValues: [0, 4, 7],
+          perms: [Perms.PAIRED_READ, Perms.NOTIFY, Perms.PAIRED_WRITE],
+        });
+      }
+    }
+
+    this.ensureCharacteristic(service, LastActivationCharacteristic).onGet(() => this.getLastActivation());
+    this.ensureCharacteristic(service, SensitivityCharacteristic).onGet(() => 4);
+    this.ensureCharacteristic(service, DurationCharacteristic).onGet(() => 5);
+  }
+
+  private ensureCharacteristic(service: Service, characteristic: CustomCharacteristicConstructor) {
+    return service.getCharacteristic(characteristic) || service.addCharacteristic(characteristic);
+  }
+
+  private configureHistoryService() {
+    if (this.device.kind !== 'person' || this.device.type !== 'motion' || !this.platform.FakeGatoHistoryService) {
+      return;
+    }
+
+    this.historyService = new this.platform.FakeGatoHistoryService('motion', {
+      displayName: this.device.name,
+      log: this.platform.log,
+    }, {
+      storage: 'fs',
+      disableTimer: true,
+    }) as FakeGatoHistoryService;
+
+    const existingHistoryService = this.accessory.services.find((service) => service.UUID === this.historyService?.UUID);
+    if (existingHistoryService) {
+      this.accessory.removeService(existingHistoryService);
+    }
+
+    this.accessory.addService(this.historyService);
+  }
+
+  private getStateFromCache(): boolean {
+    if (this.device.kind === 'aggregate') {
+      const anyoneActive = this.platform.getAnyoneStateFromCache();
+      return this.device.aggregateType === 'noone' ? !anyoneActive : anyoneActive;
+    }
+
+    return this.stateCache;
+  }
+
+  private updatePrimaryCharacteristic(state: boolean) {
+    if (this.device.type === 'occupancy') {
+      this.service.updateCharacteristic(this.platform.Characteristic.OccupancyDetected, this.encodeState(state));
+    } else {
+      this.service.updateCharacteristic(this.platform.Characteristic.MotionDetected, this.encodeState(state));
+    }
+  }
+
+  private encodeState(state: boolean) {
+    if (this.device.type === 'occupancy') {
+      return state
+        ? this.platform.Characteristic.OccupancyDetected.OCCUPANCY_DETECTED
+        : this.platform.Characteristic.OccupancyDetected.OCCUPANCY_NOT_DETECTED;
+    }
+
+    return state ? 1 : 0;
+  }
+
+  private getLastActivation(): number {
+    if (this.device.kind !== 'person') {
+      return 0;
+    }
+
+    const lastSeen = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
+    if (!lastSeen || !this.historyService) {
+      return 0;
+    }
+
+    return Math.floor(lastSeen / 1000) - this.historyService.getInitialTime();
+  }
+
+  private isActive(): boolean {
+    if (this.device.kind !== 'person') {
+      return this.getStateFromCache();
+    }
+
+    const lastSeen = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
+    if (!lastSeen) {
+      return false;
+    }
+
+    return lastSeen > Date.now() - (this.device.threshold * 60 * 1000);
+  }
+
+  private schedulePoll(delay: number) {
+    if (this.device.kind !== 'person') {
+      return;
+    }
+
+    if (this.pollTimeout) {
+      clearTimeout(this.pollTimeout);
+    }
+
+    this.pollTimeout = setTimeout(() => {
+      void this.pollTarget();
+    }, delay);
+  }
+
+  private async pollTarget() {
+    if (this.device.kind !== 'person') {
+      return;
+    }
+
+    try {
+      if (this.webhookIsOutdated()) {
+        const target = await this.resolveTarget();
+        if (target) {
+          const state = this.device.pingUseArp ? await this.arpProbe(target) : await this.pingProbe(target);
+          if (this.webhookIsOutdated()) {
+            if (state) {
+              this.platform.storage.setNumber(`lastSuccessfulPing_${this.device.target}`, Date.now());
+            }
+            if (this.successfulPingOccurredAfterWebhook()) {
+              this.setNewState(this.isActive());
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.platform.log.debug('Presence check for %s failed: %s', this.device.target, (error as Error).message);
+    } finally {
+      this.schedulePoll(this.device.pingInterval);
+    }
+  }
+
+  private async resolveTarget(): Promise<string | false> {
+    if (this.device.kind !== 'person') {
+      return false;
+    }
+
+    let target = this.device.target;
+
+    if (MAC_ADDRESS_PATTERN.test(target)) {
+      const devices = await find();
+      const device = devices.find((localDevice) => localDevice.mac?.toLowerCase() === target.toLowerCase());
+      if (!device) {
+        return false;
+      }
+      target = device.ip;
+    }
+
+    if (this.device.customDns !== false) {
+      const resolver = new Resolver();
+      resolver.setServers(this.device.customDns);
+      const records = await resolver.resolve4(target);
+      [target] = records;
+    }
+
+    return target;
+  }
+
+  private async pingProbe(target: string): Promise<boolean> {
+    const response = await ping.promise.probe(target);
+    return response.alive;
+  }
+
+  private arpProbe(target: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      arp.getMAC(target, (error, mac) => {
+        resolve(!error && MAC_ADDRESS_PATTERN.test(mac));
+      });
+    });
+  }
+
+  private webhookIsOutdated(): boolean {
+    if (this.device.kind !== 'person') {
+      return true;
+    }
+
+    const lastWebhook = this.platform.storage.getNumber(`lastWebhook_${this.device.target}`);
+    if (!lastWebhook) {
+      return true;
+    }
+
+    return lastWebhook < Date.now() - (this.device.threshold * 60 * 1000);
+  }
+
+  private successfulPingOccurredAfterWebhook(): boolean {
+    if (this.device.kind !== 'person') {
+      return false;
+    }
+
+    const lastSuccessfulPing = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
+    if (!lastSuccessfulPing) {
+      return false;
+    }
+
+    const lastWebhook = this.platform.storage.getNumber(`lastWebhook_${this.device.target}`);
+    return !lastWebhook || lastSuccessfulPing > lastWebhook;
   }
 }

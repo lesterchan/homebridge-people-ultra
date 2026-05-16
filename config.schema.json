@@ -1,17 +1,165 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "PeopleUltra",
   "pluginType": "platform",
   "singular": true,
   "strictValidation": false,
   "schema": {
     "type": "object",
-    "required": ["name"],
+    "required": ["name", "people"],
     "additionalProperties": false,
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
-        "default": "Example Dynamic Platform"
+        "default": "People Ultra"
+      },
+      "anyoneSensor": {
+        "type": "boolean",
+        "title": "Enable anyone sensor",
+        "default": false
+      },
+      "anyoneSensorName": {
+        "type": "string",
+        "title": "Name of the anyone sensor",
+        "default": "Anyone",
+        "condition": {
+          "functionBody": "return model.anyoneSensor === true;"
+        }
+      },
+      "anyoneSensorType": {
+        "title": "Type of the anyone sensor",
+        "type": "string",
+        "default": "motion",
+        "oneOf": [
+          { "title": "Motion Sensor", "enum": ["motion"] },
+          { "title": "Occupancy Sensor", "enum": ["occupancy"] }
+        ],
+        "condition": {
+          "functionBody": "return model.anyoneSensor === true;"
+        }
+      },
+      "nooneSensor": {
+        "type": "boolean",
+        "title": "Enable no one sensor",
+        "default": false
+      },
+      "nooneSensorName": {
+        "type": "string",
+        "title": "Name of the no one sensor",
+        "default": "No One",
+        "condition": {
+          "functionBody": "return model.nooneSensor === true;"
+        }
+      },
+      "nooneSensorType": {
+        "title": "Type of the no one sensor",
+        "type": "string",
+        "default": "motion",
+        "oneOf": [
+          { "title": "Motion Sensor", "enum": ["motion"] },
+          { "title": "Occupancy Sensor", "enum": ["occupancy"] }
+        ],
+        "condition": {
+          "functionBody": "return model.nooneSensor === true;"
+        }
+      },
+      "webhookEnabled": {
+        "type": "boolean",
+        "title": "Enable webhook webserver",
+        "description": "Enables the webserver for webhook functionality.",
+        "default": false
+      },
+      "webhookPort": {
+        "type": "integer",
+        "title": "Webhook port",
+        "description": "The port the webhook webserver will run on.",
+        "default": 51828,
+        "condition": {
+          "functionBody": "return model.webhookEnabled === true;"
+        }
+      },
+      "people": {
+        "type": "array",
+        "title": "People / Sensors",
+        "description": "Array of people or targets to set up as presence sensors.",
+        "default": [],
+        "items": {
+          "type": "object",
+          "title": "Person / Target",
+          "required": ["name", "target"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "title": "Sensor Name"
+            },
+            "target": {
+              "type": "string",
+              "title": "Target",
+              "description": "IP address, MAC address, or hostname to monitor."
+            },
+            "enableCustomDns": {
+              "type": "boolean",
+              "title": "Enable custom DNS servers",
+              "description": "If the target is a hostname, optionally use one or more custom DNS servers for lookup.",
+              "default": false
+            },
+            "customDns": {
+              "type": "array",
+              "title": "Custom DNS servers",
+              "default": [],
+              "items": {
+                "type": "string",
+                "title": "IP address"
+              },
+              "condition": {
+                "functionBody": "return model.people[arrayIndices].enableCustomDns === true;"
+              }
+            },
+            "type": {
+              "title": "Sensor Type",
+              "type": "string",
+              "default": "motion",
+              "description": "Choosing occupancy disables Eve history support for that sensor.",
+              "oneOf": [
+                { "title": "Motion Sensor", "enum": ["motion"] },
+                { "title": "Occupancy Sensor", "enum": ["occupancy"] }
+              ]
+            },
+            "threshold": {
+              "type": "integer",
+              "title": "Threshold (min)",
+              "description": "Minutes since this person was last seen before they are considered away.",
+              "default": 15
+            },
+            "pingInterval": {
+              "type": "integer",
+              "title": "Ping Interval (ms)",
+              "description": "Interval in milliseconds for ping or ARP checks. Set to -1 to disable polling.",
+              "default": 10000
+            },
+            "pingUseArp": {
+              "type": "boolean",
+              "title": "Use ARP lookup instead of ICMP ping",
+              "default": false
+            },
+            "excludeFromWebhook": {
+              "type": "boolean",
+              "title": "Exclude from webhook",
+              "description": "When enabled, webhook requests for this sensor are ignored.",
+              "default": false
+            },
+            "ignoreWebhookReEnter": {
+              "type": "integer",
+              "title": "Ignore webhook re-enter (s)",
+              "description": "Seconds to debounce repeated webhook enter or exit updates. Set to 0 to apply every webhook update immediately.",
+              "default": 0,
+              "condition": {
+                "functionBody": "return model.people[arrayIndices].excludeFromWebhook !== true;"
+              }
+            }
+          }
+        }
       }
     }
   }
