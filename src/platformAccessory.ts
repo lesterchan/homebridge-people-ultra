@@ -201,7 +201,11 @@ export class PeopleUltraPlatformAccessory {
   }
 
   private ensureCharacteristic(service: Service, characteristic: CustomCharacteristicConstructor) {
-    return service.getCharacteristic(characteristic) || service.addCharacteristic(characteristic);
+    if (!service.characteristics.some((existingCharacteristic) => existingCharacteristic.UUID === characteristic.UUID)) {
+      service.addOptionalCharacteristic(characteristic);
+    }
+
+    return service.getCharacteristic(characteristic)!;
   }
 
   private configureHistoryService() {
