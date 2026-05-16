@@ -1,150 +1,339 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+
 import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 
-import { ExamplePlatformAccessory } from './platformAccessory.js';
+import { PeopleUltraPlatformAccessory, type PeopleUltraDevice, type PersonDevice, type SensorType } from './platformAccessory.js';
+import { PersistenceStore } from './persistence.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
-// This is only required when using Custom Services and Characteristics not support by HomeKit
-import { EveHomeKitTypes } from 'homebridge-lib/EveHomeKitTypes';
+type FakeGatoHistoryConstructor = new (
+  accessoryType: 'motion',
+  accessory: { displayName: string; log: Logging },
+  optionalParams: Record<string, unknown>,
+) => Service;
 
-/**
- * HomebridgePlatform
- * This class is the main constructor for your plugin, this is where you should
- * parse the user config and discover/register accessories with Homebridge.
- */
-export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
+interface LegacyCharacteristicStatics {
+  Formats?: Record<string, string>;
+  Perms?: Record<string, string>;
+  Units?: Record<string, string>;
+}
+
+interface PeopleUltraConfig extends PlatformConfig {
+  anyoneSensor?: boolean;
+  anyoneSensorName?: string;
+  anyoneSensorType?: SensorType;
+  nooneSensor?: boolean;
+  nooneSensorName?: string;
+  nooneSensorType?: SensorType;
+  webhookEnabled?: boolean;
+  webhookPort?: number;
+  threshold?: number;
+  pingInterval?: number;
+  people?: PersonConfig[];
+}
+
+interface PersonConfig {
+  name?: string;
+  target?: string;
+  enableCustomDns?: boolean;
+  customDns?: string[] | string;
+  type?: SensorType;
+  threshold?: number;
+  pingInterval?: number;
+  pingUseArp?: boolean;
+  excludeFromWebhook?: boolean;
+  ignoreWebhookReEnter?: number;
+}
+
+interface WebhookQueueEntry {
+  newState: boolean;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+const require = createRequire(import.meta.url);
+
+export class PeopleUltraPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
-
-  // this is used to track restored cached accessories
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
   public readonly discoveredCacheUUIDs: string[] = [];
+  public readonly personAccessories: Map<string, PeopleUltraPlatformAccessory> = new Map();
+  public readonly aggregateAccessories: Set<PeopleUltraPlatformAccessory> = new Set();
+  public readonly storage: PersistenceStore;
+  public readonly FakeGatoHistoryService?: FakeGatoHistoryConstructor;
 
-  // This is only required when using Custom Services and Characteristics not support by HomeKit
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public readonly CustomServices: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public readonly CustomCharacteristics: any;
+  private readonly pluginConfig: PeopleUltraConfig;
+  private readonly webhookQueue: Map<string, WebhookQueueEntry> = new Map();
+  private webhookServer?: Server;
 
   constructor(
     public readonly log: Logging,
-    public readonly config: PlatformConfig,
+    config: PlatformConfig,
     public readonly api: API,
   ) {
+    this.pluginConfig = config as PeopleUltraConfig;
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
+    this.storage = new PersistenceStore(join(api.user.storagePath(), 'plugin-persist', PLUGIN_NAME, 'state.json'), log);
+    this.installLegacyCharacteristicStatics();
+    this.FakeGatoHistoryService = this.loadFakeGatoHistoryService();
 
-    // This is only required when using Custom Services and Characteristics not support by HomeKit
-    this.CustomServices = new EveHomeKitTypes(this.api).Services;
-    this.CustomCharacteristics = new EveHomeKitTypes(this.api).Characteristics;
-
-    this.log.debug('Finished initializing platform:', this.config.name);
-
-    // When this event is fired it means Homebridge has restored all cached accessories from disk.
-    // Dynamic Platform plugins should only register new accessories after this event was fired,
-    // in order to ensure they weren't added to homebridge already. This event can also be used
-    // to start discovery of new accessories.
     this.api.on('didFinishLaunching', () => {
-      log.debug('Executed didFinishLaunching callback');
-      // run the method to discover / register your devices as accessories
       this.discoverDevices();
+      if (this.pluginConfig.webhookEnabled === true) {
+        this.startServer();
+      }
     });
   }
 
-  /**
-   * This function is invoked when homebridge restores cached accessories from disk at startup.
-   * It should be used to set up event handlers for characteristics and update respective values.
-   */
   configureAccessory(accessory: PlatformAccessory) {
-    this.log.info('Loading accessory from cache:', accessory.displayName);
-
-    // add the restored accessory to the accessories cache, so we can track if it has already been registered
+    this.log.debug('Loading accessory from cache: %s', accessory.displayName);
     this.accessories.set(accessory.UUID, accessory);
   }
 
-  /**
-   * This is an example method showing how to register discovered accessories.
-   * Accessories must only be registered once, previously created accessories
-   * must not be registered again to prevent "duplicate UUID" errors.
-   */
-  discoverDevices() {
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
-    const exampleDevices = [
-      {
-        exampleUniqueId: 'ABCD',
-        exampleDisplayName: 'Bedroom',
-      },
-      {
-        exampleUniqueId: 'EFGH',
-        exampleDisplayName: 'Kitchen',
-      },
-      {
-        // This is an example of a device which uses a Custom Service
-        exampleUniqueId: 'IJKL',
-        exampleDisplayName: 'Backyard',
-        CustomService: 'AirPressureSensor',
-      },
-    ];
+  registerPersonAccessory(accessory: PeopleUltraPlatformAccessory) {
+    if (accessory.device.kind === 'person') {
+      this.personAccessories.set(accessory.device.target, accessory);
+    }
+  }
 
-    // loop over the discovered devices and register each one if it has not already been registered
-    for (const device of exampleDevices) {
-      // generate a unique id for the accessory this should be generated from
-      // something globally unique, but constant, for example, the device serial
-      // number or MAC address
-      const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
+  registerAggregateAccessory(accessory: PeopleUltraPlatformAccessory) {
+    if (accessory.device.kind === 'aggregate') {
+      this.aggregateAccessories.add(accessory);
+    }
+  }
 
-      // see if an accessory with the same uuid has already been registered and restored from
-      // the cached devices we stored in the `configureAccessory` method above
+  refreshAggregateAccessories() {
+    for (const accessory of this.aggregateAccessories) {
+      accessory.refreshState();
+    }
+  }
+
+  getAnyoneStateFromCache(): boolean {
+    for (const accessory of this.personAccessories.values()) {
+      if (accessory.stateCache) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private discoverDevices() {
+    this.personAccessories.clear();
+    this.aggregateAccessories.clear();
+    this.discoveredCacheUUIDs.length = 0;
+    const devices = this.getConfiguredDevices();
+
+    for (const device of devices) {
+      const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${device.kind}:${device.id}`);
       const existingAccessory = this.accessories.get(uuid);
 
       if (existingAccessory) {
-        // the accessory already exists
-        this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-
-        // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. e.g.:
-        // existingAccessory.context.device = device;
-        // this.api.updatePlatformAccessories([existingAccessory]);
-
-        // create the accessory handler for the restored accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, existingAccessory);
-
-        // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, e.g.:
-        // remove platform accessories when no longer present
-        // this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
-        // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
+        this.log.info('Restoring existing accessory from cache: %s', existingAccessory.displayName);
+        existingAccessory.context.device = device;
+        existingAccessory.updateDisplayName(device.name);
+        this.api.updatePlatformAccessories([existingAccessory]);
+        new PeopleUltraPlatformAccessory(this, existingAccessory as PlatformAccessory<{ device: PeopleUltraDevice }>);
       } else {
-        // the accessory does not yet exist, so we need to create it
-        this.log.info('Adding new accessory:', device.exampleDisplayName);
-
-        // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
-
-        // store a copy of the device object in the `accessory.context`
-        // the `context` property can be used to store any data about the accessory you may need
+        this.log.info('Adding new accessory: %s', device.name);
+        const accessory = new this.api.platformAccessory<{ device: PeopleUltraDevice }>(device.name, uuid);
         accessory.context.device = device;
-
-        // create the accessory handler for the newly create accessory
-        // this is imported from `platformAccessory.ts`
-        new ExamplePlatformAccessory(this, accessory);
-
-        // link the accessory to your platform
+        new PeopleUltraPlatformAccessory(this, accessory);
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+        this.accessories.set(uuid, accessory);
       }
 
-      // push into discoveredCacheUUIDs
       this.discoveredCacheUUIDs.push(uuid);
     }
 
-    // you can also deal with accessories from the cache which are no longer present by removing them from Homebridge
-    // for example, if your plugin logs into a cloud account to retrieve a device list, and a user has previously removed a device
-    // from this cloud account, then this device will no longer be present in the device list but will still be in the Homebridge cache
     for (const [uuid, accessory] of this.accessories) {
       if (!this.discoveredCacheUUIDs.includes(uuid)) {
-        this.log.info('Removing existing accessory from cache:', accessory.displayName);
+        this.log.info('Removing stale accessory from cache: %s', accessory.displayName);
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+        this.accessories.delete(uuid);
       }
     }
+  }
+
+  private getConfiguredDevices(): PeopleUltraDevice[] {
+    const people = Array.isArray(this.pluginConfig.people) ? this.pluginConfig.people : [];
+    const devices: PeopleUltraDevice[] = people.map((person, index) => this.normalizePerson(person, index));
+
+    if (this.pluginConfig.anyoneSensor === true) {
+      devices.push({
+        kind: 'aggregate',
+        aggregateType: 'anyone',
+        id: 'anyone',
+        name: this.pluginConfig.anyoneSensorName || 'Anyone',
+        type: this.normalizeSensorType(this.pluginConfig.anyoneSensorType, 'Anyone'),
+      });
+    }
+
+    if (this.pluginConfig.nooneSensor === true) {
+      devices.push({
+        kind: 'aggregate',
+        aggregateType: 'noone',
+        id: 'noone',
+        name: this.pluginConfig.nooneSensorName || 'No One',
+        type: this.normalizeSensorType(this.pluginConfig.nooneSensorType, 'No One'),
+      });
+    }
+
+    return devices;
+  }
+
+  private normalizePerson(person: PersonConfig, index: number): PersonDevice {
+    const name = person.name || `People Sensor ${index + 1}`;
+    const target = person.target || '127.0.0.1';
+
+    if (!person.target) {
+      this.log.warn('No target was given for %s. Defaulting to 127.0.0.1.', name);
+    }
+
+    return {
+      kind: 'person',
+      id: `${name}:${target}`,
+      name,
+      target,
+      type: this.normalizeSensorType(person.type, name),
+      threshold: person.threshold || this.pluginConfig.threshold || 15,
+      pingInterval: person.pingInterval ?? this.pluginConfig.pingInterval ?? 10000,
+      pingUseArp: person.pingUseArp ?? false,
+      customDns: this.normalizeCustomDns(person),
+      excludeFromWebhook: person.excludeFromWebhook ?? false,
+      ignoreWebhookReEnter: person.ignoreWebhookReEnter ?? 0,
+    };
+  }
+
+  private normalizeSensorType(type: SensorType | undefined, sensorName: string): SensorType {
+    if (type === 'motion' || type === 'occupancy') {
+      return type;
+    }
+
+    if (type !== undefined) {
+      this.log.warn('Type "%s" for sensor %s is invalid. Defaulting to motion.', type, sensorName);
+    }
+
+    return 'motion';
+  }
+
+  private normalizeCustomDns(person: PersonConfig): string[] | false {
+    if (person.enableCustomDns === false || !person.customDns) {
+      return false;
+    }
+
+    return Array.isArray(person.customDns) ? person.customDns : [person.customDns];
+  }
+
+  private startServer() {
+    if (this.webhookServer) {
+      return;
+    }
+
+    const webhookPort = this.pluginConfig.webhookPort || 51828;
+    this.webhookServer = createServer((request, response) => this.handleWebhook(request, response));
+    this.webhookServer.listen(webhookPort, () => {
+      this.log.info('Webhook: Started webserver on port %s.', webhookPort);
+    });
+    this.webhookServer.on('error', (error) => {
+      this.log.error('Webhook server error: %s', error.message);
+    });
+  }
+
+  private handleWebhook(request: IncomingMessage, response: ServerResponse) {
+    const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+    const sensor = requestUrl.searchParams.get('sensor');
+    const state = requestUrl.searchParams.get('state');
+
+    if (!sensor || state === null) {
+      response.writeHead(404, { 'Content-Type': 'text/plain' });
+      response.end('Webhook error: No sensor or state specified in request.');
+      return;
+    }
+
+    const newState = state === 'true';
+    this.log.info('Received webhook for %s -> %s', sensor.toLowerCase(), newState);
+
+    for (const accessory of this.personAccessories.values()) {
+      const device = accessory.device as PersonDevice;
+      if (device.name.toLowerCase() === sensor.toLowerCase()) {
+        if (device.excludeFromWebhook !== true) {
+          this.queueWebhook(device, newState);
+        }
+        break;
+      }
+    }
+
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ success: true }));
+  }
+
+  private queueWebhook(device: PersonDevice, newState: boolean) {
+    const existingQueueEntry = this.webhookQueue.get(device.target);
+    if (existingQueueEntry) {
+      clearTimeout(existingQueueEntry.timeout);
+    }
+
+    this.webhookQueue.set(device.target, {
+      newState,
+      timeout: setTimeout(() => this.runWebhookFromQueueForTarget(device.target), device.ignoreWebhookReEnter * 1000),
+    });
+  }
+
+  private runWebhookFromQueueForTarget(target: string) {
+    const webhookQueueEntry = this.webhookQueue.get(target);
+    const accessory = this.personAccessories.get(target);
+    if (!webhookQueueEntry || !accessory) {
+      return;
+    }
+
+    this.log.info('Running webhook for %s -> %s', target, webhookQueueEntry.newState);
+    this.webhookQueue.delete(target);
+    this.storage.setNumber(`lastWebhook_${target}`, Date.now());
+    accessory.setNewState(webhookQueueEntry.newState);
+  }
+
+  private loadFakeGatoHistoryService(): FakeGatoHistoryConstructor | undefined {
+    try {
+      const fakeGatoFactory = require('fakegato-history') as (homebridge: object) => FakeGatoHistoryConstructor;
+      return fakeGatoFactory({ hap: this.api.hap, user: this.api.user });
+    } catch (error) {
+      this.log.warn('Fakegato history support is unavailable: %s', (error as Error).message);
+      return undefined;
+    }
+  }
+
+  private installLegacyCharacteristicStatics() {
+    const Characteristic = this.api.hap.Characteristic as typeof this.api.hap.Characteristic & LegacyCharacteristicStatics;
+
+    Characteristic.Formats ??= {
+      BOOL: 'bool',
+      INT: 'int',
+      FLOAT: 'float',
+      STRING: 'string',
+      UINT8: 'uint8',
+      UINT16: 'uint16',
+      UINT32: 'uint32',
+      UINT64: 'uint64',
+      DATA: 'data',
+      TLV8: 'tlv8',
+    };
+
+    Characteristic.Perms ??= {
+      READ: 'pr',
+      WRITE: 'pw',
+      NOTIFY: 'ev',
+      HIDDEN: 'hd',
+    };
+
+    Characteristic.Units ??= {
+      CELSIUS: 'celsius',
+      PERCENTAGE: 'percentage',
+      ARC_DEGREE: 'arcdegrees',
+      LUX: 'lux',
+      SECONDS: 'seconds',
+    };
   }
 }
