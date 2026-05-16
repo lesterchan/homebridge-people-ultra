@@ -14,6 +14,12 @@ type FakeGatoHistoryConstructor = new (
   optionalParams: Record<string, unknown>,
 ) => Service;
 
+interface LegacyCharacteristicStatics {
+  Formats?: Record<string, string>;
+  Perms?: Record<string, string>;
+  Units?: Record<string, string>;
+}
+
 interface PeopleUltraConfig extends PlatformConfig {
   anyoneSensor?: boolean;
   anyoneSensorName?: string;
@@ -71,6 +77,7 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.storage = new PersistenceStore(join(api.user.storagePath(), 'plugin-persist', PLUGIN_NAME, 'state.json'), log);
+    this.installLegacyCharacteristicStatics();
     this.FakeGatoHistoryService = this.loadFakeGatoHistoryService();
 
     this.api.on('didFinishLaunching', () => {
@@ -296,5 +303,37 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
       this.log.warn('Fakegato history support is unavailable: %s', (error as Error).message);
       return undefined;
     }
+  }
+
+  private installLegacyCharacteristicStatics() {
+    const Characteristic = this.api.hap.Characteristic as typeof this.api.hap.Characteristic & LegacyCharacteristicStatics;
+
+    Characteristic.Formats ??= {
+      BOOL: 'bool',
+      INT: 'int',
+      FLOAT: 'float',
+      STRING: 'string',
+      UINT8: 'uint8',
+      UINT16: 'uint16',
+      UINT32: 'uint32',
+      UINT64: 'uint64',
+      DATA: 'data',
+      TLV8: 'tlv8',
+    };
+
+    Characteristic.Perms ??= {
+      READ: 'pr',
+      WRITE: 'pw',
+      NOTIFY: 'ev',
+      HIDDEN: 'hd',
+    };
+
+    Characteristic.Units ??= {
+      CELSIUS: 'celsius',
+      PERCENTAGE: 'percentage',
+      ARC_DEGREE: 'arcdegrees',
+      LUX: 'lux',
+      SECONDS: 'seconds',
+    };
   }
 }
