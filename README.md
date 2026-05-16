@@ -2,11 +2,7 @@
   <a href="https://github.com/homebridge/homebridge"><img src="https://raw.githubusercontent.com/homebridge/branding/master/logos/homebridge-color-round-stylized.png" height="140"></a>
 </p>
 
-<span align="center">
-
 # homebridge-people-ultra
-
-</span>
 
 Homebridge People Ultra creates HomeKit presence sensors for people or devices seen on your local network. It is a TypeScript dynamic-platform port of the abandoned People Pro plugin, renamed from People Pro to People Ultra so it can be published to npm as `homebridge-people-ultra`.
 
@@ -34,8 +30,8 @@ Then add the `PeopleUltra` platform to your Homebridge configuration.
   "webhookPort": 51828,
   "people": [
     {
-      "name": "Max",
-      "target": "Max-iPhone",
+      "name": "Lester Chan",
+      "target": "LesterChan-iPhone",
       "enableCustomDns": true,
       "customDns": ["8.8.8.8", "8.8.4.4"],
       "threshold": 15,
@@ -118,3 +114,14 @@ npm run watch
 ```
 
 The watch command uses `test/hbConfig/config.json` and restarts Homebridge when TypeScript files change.
+
+## Thanks
+
+Thanks to everyone who's helped contribute code, feedback and support. In particular:
+
+- [PeteLawrence](https://github.com/PeteLawrence/homebridge-people) - for the original plugin
+- [simont77](https://github.com/simont77/fakegato-history) - for the fakegato-plugin
+- [wr](https://github.com/wr) - for adding in webhook support
+- [benzman81](https://github.com/benzman81) - for porting the plugin over to be a Platform and improving how ping and webhooks work together, and numerous other fixes
+- [skrollme](https://github.com/skrollme) - for the plugin that homebridge-people-pro is forked from
+- [mfkrause](https://github.com/mfkrause) - for the plugin this one is forked from
