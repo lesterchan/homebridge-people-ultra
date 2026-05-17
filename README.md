@@ -1,10 +1,6 @@
-<p align="center">
-  <a href="https://github.com/homebridge/homebridge"><img src="https://raw.githubusercontent.com/homebridge/branding/master/logos/homebridge-color-round-stylized.png" height="140"></a>
-</p>
-
 # homebridge-people-ultra
 
-Homebridge People Ultra creates HomeKit presence sensors for people or devices seen on your local network. It is a TypeScript dynamic-platform port of the abandoned People Pro plugin, renamed from People Pro to People Ultra so it can be published to npm as `homebridge-people-ultra`.
+The People Ultra Homebridge plugin creates HomeKit presence sensors for people or devices on your local network. It is a TypeScript port of the now archived [homebridge-people-pro](https://github.com/mfkrause/homebridge-people-pro). The port is done by Codex on GPT 5.5 and is based on [homebridge-plugin-template](https://github.com/homebridge/homebridge-plugin-template).
 
 The plugin can monitor targets by IP address, hostname, or MAC address. It can also run an optional webhook server for location-aware mobile apps such as Locative, and motion sensors can expose Eve history through fakegato.
 
@@ -84,7 +80,7 @@ Then add the `PeopleUltra` platform to your Homebridge configuration.
 
 ## How It Works
 
-People Ultra records the last successful network sighting for each configured target. On every HomeKit state lookup and poll cycle, that timestamp is compared to the configured threshold. If the target was seen recently enough, the person is treated as home.
+People Ultra records the last successful network sighting for each configured target. On every HomeKit state-lookup and poll cycle, that timestamp is compared with the configured threshold. If the target was seen recently enough, the person is treated as home.
 
 When `pingUseArp` is enabled, the plugin checks ARP lookup results instead of using ICMP ping. When the target is a MAC address, the plugin first attempts to find the matching local IP address before checking presence.
 
@@ -97,7 +93,7 @@ http://[homebridge-ip]:51828/?sensor=[name]&state=true
 http://[homebridge-ip]:51828/?sensor=[name]&state=false
 ```
 
-The `sensor` value must match the configured person `name`. A successful webhook stores a timestamp and updates that person's HomeKit state. Polling resumes after the webhook timestamp becomes older than the person's threshold.
+The `sensor` value must match the configured person's `name`. A successful webhook stores a timestamp and updates that person's HomeKit state. Polling resumes after the webhook timestamp becomes older than the person's threshold.
 
 ## Development
 
@@ -117,11 +113,11 @@ The watch command uses `test/hbConfig/config.json` and restarts Homebridge when 
 
 ## Thanks
 
-Thanks to everyone who's helped contribute code, feedback and support. In particular:
+Thanks to the following contributors for their code, feedback, and support:
 
-- [PeteLawrence](https://github.com/PeteLawrence/homebridge-people) - for the original plugin
-- [simont77](https://github.com/simont77/fakegato-history) - for the fakegato-plugin
-- [wr](https://github.com/wr) - for adding in webhook support
-- [benzman81](https://github.com/benzman81) - for porting the plugin over to be a Platform and improving how ping and webhooks work together, and numerous other fixes
-- [skrollme](https://github.com/skrollme) - for the plugin that homebridge-people-pro is forked from
-- [mfkrause](https://github.com/mfkrause) - for the plugin this one is forked from
+- [PeteLawrence](https://github.com/PeteLawrence/homebridge-people) — original plugin author
+- [simont77](https://github.com/simont77/fakegato-history) — author of fakegato-history
+- [wr](https://github.com/wr) — added webhook support
+- [benzman81](https://github.com/benzman81) — ported to a Platform; improved ping/webhook integration and many fixes
+- [skrollme](https://github.com/skrollme) — upstream plugin author that homebridge-people-pro forked from
+- [mfkrause](https://github.com/mfkrause) — author of homebridge-people-pro (this project's ancestor)
