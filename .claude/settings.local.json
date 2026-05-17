@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(find /Users/lesterchan/git/github/lesterchan/homebridge-people-pro -type f \\\\\\( -name \"*.js\" -o -name \"*.ts\" \\\\\\) ! -path \"*/node_modules/*\" ! -path \"*/dist/*\" ! -path \"*/.git/*\" ! -path \"*/test/*\" | sort)",
+      "Read(//Users/lesterchan/git/github/lesterchan/homebridge-people-pro/**)"
     ]
   }
 }
