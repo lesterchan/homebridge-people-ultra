@@ -1,6 +1,6 @@
 import { Resolver } from 'node:dns/promises';
 import type { Characteristic, PlatformAccessory, Service } from 'homebridge';
-import { Formats, Perms, Units } from '@homebridge/hap-nodejs/dist/lib/Characteristic.js';
+import { Formats, Perms, Units } from 'homebridge';
 
 import arp from 'node-arp';
 import ping from 'ping';

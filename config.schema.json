@@ -78,6 +78,18 @@
           "functionBody": "return model.webhookEnabled === true;"
         }
       },
+      "threshold": {
+        "type": "integer",
+        "title": "Default Threshold (min)",
+        "description": "Default minutes since last seen before a person is considered away. Can be overridden per person.",
+        "default": 15
+      },
+      "pingInterval": {
+        "type": "integer",
+        "title": "Default Ping Interval (ms)",
+        "description": "Default interval in milliseconds for ping or ARP checks. Can be overridden per person. Set to -1 to disable polling.",
+        "default": 10000
+      },
       "people": {
         "type": "array",
         "title": "People / Sensors",

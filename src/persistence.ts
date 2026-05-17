@@ -5,6 +5,7 @@ import type { Logging } from 'homebridge';
 
 export class PersistenceStore {
   private state: Record<string, number> = {};
+  private saveTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly filePath: string,
@@ -20,7 +21,17 @@ export class PersistenceStore {
 
   setNumber(key: string, value: number) {
     this.state[key] = value;
-    this.save();
+    this.scheduleSave();
+  }
+
+  private scheduleSave() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+    }
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined;
+      this.save();
+    }, 500);
   }
 
   private load() {
