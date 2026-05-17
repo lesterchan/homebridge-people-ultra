@@ -58,7 +58,7 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
   public readonly accessories: Map<string, PlatformAccessory> = new Map();
-  public readonly discoveredCacheUUIDs: string[] = [];
+  private readonly discoveredCacheUUIDs: Set<string> = new Set();
   public readonly personAccessories: Map<string, PeopleUltraPlatformAccessory> = new Map();
   public readonly aggregateAccessories: Set<PeopleUltraPlatformAccessory> = new Set();
   public readonly storage: PersistenceStore;
@@ -77,8 +77,10 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.storage = new PersistenceStore(join(api.user.storagePath(), 'plugin-persist', PLUGIN_NAME, 'state.json'), log);
-    this.installLegacyCharacteristicStatics();
     this.FakeGatoHistoryService = this.loadFakeGatoHistoryService();
+    if (this.FakeGatoHistoryService) {
+      this.installLegacyCharacteristicStatics();
+    }
 
     this.api.on('didFinishLaunching', () => {
       this.discoverDevices();
@@ -123,7 +125,7 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
   private discoverDevices() {
     this.personAccessories.clear();
     this.aggregateAccessories.clear();
-    this.discoveredCacheUUIDs.length = 0;
+    this.discoveredCacheUUIDs.clear();
     const devices = this.getConfiguredDevices();
 
     for (const device of devices) {
@@ -145,11 +147,11 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
         this.accessories.set(uuid, accessory);
       }
 
-      this.discoveredCacheUUIDs.push(uuid);
+      this.discoveredCacheUUIDs.add(uuid);
     }
 
     for (const [uuid, accessory] of this.accessories) {
-      if (!this.discoveredCacheUUIDs.includes(uuid)) {
+      if (!this.discoveredCacheUUIDs.has(uuid)) {
         this.log.info('Removing stale accessory from cache: %s', accessory.displayName);
         this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         this.accessories.delete(uuid);
@@ -256,14 +258,22 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
     const newState = state === 'true';
     this.log.info('Received webhook for %s -> %s', sensor.toLowerCase(), newState);
 
+    let found = false;
     for (const accessory of this.personAccessories.values()) {
       const device = accessory.device as PersonDevice;
       if (device.name.toLowerCase() === sensor.toLowerCase()) {
+        found = true;
         if (device.excludeFromWebhook !== true) {
           this.queueWebhook(device, newState);
         }
         break;
       }
+    }
+
+    if (!found) {
+      response.writeHead(404, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ success: false, error: `No sensor found matching "${sensor}".` }));
+      return;
     }
 
     response.writeHead(200, { 'Content-Type': 'application/json' });

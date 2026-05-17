@@ -51,6 +51,12 @@ export class PeopleUltraPlatformAccessory {
   public readonly device: PeopleUltraDevice;
   public stateCache = false;
 
+  private static eveCharacteristics?: {
+    LastActivation: CustomCharacteristicConstructor;
+    Duration: CustomCharacteristicConstructor;
+    Sensitivity: CustomCharacteristicConstructor;
+  };
+
   private readonly service: Service;
   private historyService?: FakeGatoHistoryService;
   private pollTimeout?: ReturnType<typeof setTimeout>;
@@ -152,52 +158,61 @@ export class PeopleUltraPlatformAccessory {
   }
 
   private configureEveMotionCharacteristics(service: Service) {
-    const Characteristic = this.platform.Characteristic;
+    if (!PeopleUltraPlatformAccessory.eveCharacteristics) {
+      const Characteristic = this.platform.Characteristic;
 
-    class LastActivationCharacteristic extends Characteristic {
-      static readonly UUID = 'E863F11A-079E-48FF-8F27-9C2605A29F52';
+      class LastActivationCharacteristic extends Characteristic {
+        static readonly UUID = 'E863F11A-079E-48FF-8F27-9C2605A29F52';
 
-      constructor() {
-        super('LastActivation', LastActivationCharacteristic.UUID, {
-          format: Formats.UINT32,
-          unit: Units.SECONDS,
-          perms: [Perms.PAIRED_READ, Perms.NOTIFY],
-        });
+        constructor() {
+          super('LastActivation', LastActivationCharacteristic.UUID, {
+            format: Formats.UINT32,
+            unit: Units.SECONDS,
+            perms: [Perms.PAIRED_READ, Perms.NOTIFY],
+          });
+        }
       }
+
+      class DurationCharacteristic extends Characteristic {
+        static readonly UUID = 'E863F12D-079E-48FF-8F27-9C2605A29F52';
+
+        constructor() {
+          super('Duration', DurationCharacteristic.UUID, {
+            format: Formats.UINT16,
+            unit: Units.SECONDS,
+            minValue: 5,
+            maxValue: 15 * 3600,
+            validValues: [5, 10, 20, 30, 60, 120, 180, 300, 600, 1200, 1800, 3600, 7200, 10800, 18000, 36000, 43200, 54000],
+            perms: [Perms.PAIRED_READ, Perms.NOTIFY, Perms.PAIRED_WRITE],
+          });
+        }
+      }
+
+      class SensitivityCharacteristic extends Characteristic {
+        static readonly UUID = 'E863F120-079E-48FF-8F27-9C2605A29F52';
+
+        constructor() {
+          super('Sensitivity', SensitivityCharacteristic.UUID, {
+            format: Formats.UINT8,
+            minValue: 0,
+            maxValue: 7,
+            validValues: [0, 4, 7],
+            perms: [Perms.PAIRED_READ, Perms.NOTIFY, Perms.PAIRED_WRITE],
+          });
+        }
+      }
+
+      PeopleUltraPlatformAccessory.eveCharacteristics = {
+        LastActivation: LastActivationCharacteristic,
+        Duration: DurationCharacteristic,
+        Sensitivity: SensitivityCharacteristic,
+      };
     }
 
-    class DurationCharacteristic extends Characteristic {
-      static readonly UUID = 'E863F12D-079E-48FF-8F27-9C2605A29F52';
-
-      constructor() {
-        super('Duration', DurationCharacteristic.UUID, {
-          format: Formats.UINT16,
-          unit: Units.SECONDS,
-          minValue: 5,
-          maxValue: 15 * 3600,
-          validValues: [5, 10, 20, 30, 60, 120, 180, 300, 600, 1200, 1800, 3600, 7200, 10800, 18000, 36000, 43200, 54000],
-          perms: [Perms.PAIRED_READ, Perms.NOTIFY, Perms.PAIRED_WRITE],
-        });
-      }
-    }
-
-    class SensitivityCharacteristic extends Characteristic {
-      static readonly UUID = 'E863F120-079E-48FF-8F27-9C2605A29F52';
-
-      constructor() {
-        super('Sensitivity', SensitivityCharacteristic.UUID, {
-          format: Formats.UINT8,
-          minValue: 0,
-          maxValue: 7,
-          validValues: [0, 4, 7],
-          perms: [Perms.PAIRED_READ, Perms.NOTIFY, Perms.PAIRED_WRITE],
-        });
-      }
-    }
-
-    this.ensureCharacteristic(service, LastActivationCharacteristic).onGet(() => this.getLastActivation());
-    this.ensureCharacteristic(service, SensitivityCharacteristic).onGet(() => 4);
-    this.ensureCharacteristic(service, DurationCharacteristic).onGet(() => 5);
+    const { LastActivation, Duration, Sensitivity } = PeopleUltraPlatformAccessory.eveCharacteristics;
+    this.ensureCharacteristic(service, LastActivation).onGet(() => this.getLastActivation());
+    this.ensureCharacteristic(service, Sensitivity).onGet(() => 4);
+    this.ensureCharacteristic(service, Duration).onGet(() => 5);
   }
 
   private ensureCharacteristic(service: Service, characteristic: CustomCharacteristicConstructor) {
@@ -334,6 +349,7 @@ export class PeopleUltraPlatformAccessory {
       const devices = await find();
       const device = devices.find((localDevice) => localDevice.mac?.toLowerCase() === target.toLowerCase());
       if (!device) {
+        this.platform.log.debug('MAC address %s not found in local network scan.', target);
         return false;
       }
       target = device.ip;
