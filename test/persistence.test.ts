@@ -63,3 +63,27 @@ test('writes are debounced and flushed to disk after 500ms', () => {
     rmSync(file, { force: true });
   }
 });
+
+test('flush persists pending state immediately without waiting for the debounce', () => {
+  const file = tempFile();
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const store = new PersistenceStore(file, noopLog);
+    store.setNumber('x', 7);
+
+    assert.throws(() => readFileSync(file, 'utf8')); // debounce has not elapsed
+    store.flush();
+
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).x, 7);
+  } finally {
+    mock.timers.reset();
+    rmSync(file, { force: true });
+  }
+});
+
+test('flush with no pending write does not create a file or throw', () => {
+  const file = tempFile();
+  const store = new PersistenceStore(file, noopLog);
+  store.flush(); // nothing queued
+  assert.throws(() => readFileSync(file, 'utf8')); // still not written
+});

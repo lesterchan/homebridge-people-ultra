@@ -64,6 +64,10 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
         this.startServer();
       }
     });
+
+    this.api.on('shutdown', () => {
+      this.storage.flush();
+    });
   }
 
   configureAccessory(accessory: PlatformAccessory) {

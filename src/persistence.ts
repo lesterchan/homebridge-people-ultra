@@ -24,6 +24,18 @@ export class PersistenceStore {
     this.scheduleSave();
   }
 
+  /**
+   * Writes any pending debounced state to disk immediately. Call on shutdown so
+   * a timestamp captured within the debounce window is not lost on restart.
+   */
+  flush() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = undefined;
+      this.save();
+    }
+  }
+
   private scheduleSave() {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
