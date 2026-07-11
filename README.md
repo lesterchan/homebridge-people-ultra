@@ -3,7 +3,7 @@
 [![Build, Lint and Test](https://github.com/lesterchan/homebridge-people-ultra/actions/workflows/build.yml/badge.svg)](https://github.com/lesterchan/homebridge-people-ultra/actions/workflows/build.yml)
 [![npm version](https://img.shields.io/npm/v/homebridge-people-ultra.svg)](https://www.npmjs.com/package/homebridge-people-ultra)
 
-The People Ultra Homebridge plugin creates HomeKit presence sensors for people or devices on your local network. It is a TypeScript port of the now archived [homebridge-people-pro](https://github.com/mfkrause/homebridge-people-pro). Ported by OpenAI GPT, refactored by Claude Code (Opus 4.8), and based on [homebridge-plugin-template](https://github.com/homebridge/homebridge-plugin-template).
+The People Ultra Homebridge plugin creates HomeKit presence sensors for people or devices on your local network. It is a TypeScript port of the now archived [homebridge-people-pro](https://github.com/mfkrause/homebridge-people-pro). Ported by OpenAI Codex (GPT-5.5), refactored by Claude Code (Opus 4.8), and based on [homebridge-plugin-template](https://github.com/homebridge/homebridge-plugin-template).
 
 The plugin can monitor targets by IP address, hostname, or MAC address. It can also run an optional webhook server for location-aware mobile apps such as Locative, and motion sensors can expose Eve history through fakegato.
 
