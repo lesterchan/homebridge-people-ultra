@@ -106,7 +106,8 @@ export class PeopleUltraPlatformAccessory {
     const lookupType = this.device.pingUseArp ? 'arp lookup' : 'ping';
 
     this.platform.log.info(
-      'Changed occupancy state for %s to %s. Last successful %s %s, last webhook %s.',
+      'Changed %s state for %s to %s. Last successful %s %s, last webhook %s.',
+      this.device.type,
       this.device.target,
       newState,
       lookupType,
