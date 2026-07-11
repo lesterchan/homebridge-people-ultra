@@ -137,3 +137,11 @@ Network probes, the webhook HTTP server, HAP wiring, and fakegato history are **
 - ESLint enforces single quotes, 2-space indent, semicolons, trailing commas, and `max-len: 160`. Run `npm run lint` before committing.
 - No `console.log` — always use `this.platform.log` (or `this.log` in the platform). Use `log.debug` for verbose diagnostics, `log.info` for state changes, `log.warn` for recoverable config issues, `log.error` for server errors.
 - Platform constants (`PLATFORM_NAME`, `PLUGIN_NAME`) must stay in `src/settings.ts` and be imported from there — they are used in both `src/index.ts` and `src/platform.ts`.
+
+## Dependency audit
+
+`npm audit` reports advisories in the `ip` / `ip-address` / `get-ip-range` chain, pulled in transitively by `local-devices` (used only for MAC-address target resolution). These are **known and intentionally left unfixed**:
+
+- **Not reachable here:** the `ip-address` XSS is in HTML-emitting methods (never used), the `ip` SSRF is an `isPublic` miscategorization (we only scan the local LAN), and the `get-ip-range` DoS needs attacker-controlled CIDR input (ours is the user's own network). This is a Homebridge plugin on a trusted LAN, not an internet-facing service.
+- **Do not run `npm audit fix --force`** — it downgrades `local-devices` to `3.0.0` (undoing a verified upgrade), and the patched `ip@2` / `ip-address@10` are breaking-major API changes that `get-ip-range@2.1.1` cannot use. The real fix must come from `get-ip-range` / `local-devices` upstream.
+- Safely-patchable advisories (e.g. `qs` via `fakegato-history` → `googleapis`) are kept current with plain `npm audit fix` (no `--force`). CI already runs `npm audit` non-fatally.

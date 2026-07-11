@@ -117,6 +117,8 @@ npm run test:coverage
 
 CI ([`.github/workflows/build.yml`](.github/workflows/build.yml)) runs lint, type-check, build, and tests on Node 22.x and 24.x for every push and pull request.
 
+> **Security note:** `npm audit` flags a few advisories in `local-devices`' transitive `ip` / `get-ip-range` chain (used for MAC-address scanning). These are not reachable in normal use (LAN-only scanning on a trusted network) and cannot be resolved without breaking `local-devices` — do **not** run `npm audit fix --force`, which downgrades it. See CLAUDE.md for details.
+
 For local Homebridge testing (exercises the real network probes, HAP wiring, and webhook server that unit tests do not cover):
 
 ```shell
