@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAccessory, PlatformConfig, Service } from 'homebridge';
 
-import { PeopleUltraPlatformAccessory, type PeopleUltraDevice, type PersonDevice, type SensorType } from './platformAccessory.js';
+import { PeopleUltraPlatformAccessory, type PeopleUltraDevice, type PersonDevice } from './platformAccessory.js';
+import { getConfiguredDevices, type PeopleUltraConfig } from './config.js';
+import { anyoneActive } from './aggregate.js';
 import { PersistenceStore } from './persistence.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
@@ -18,33 +20,6 @@ interface LegacyCharacteristicStatics {
   Formats?: Record<string, string>;
   Perms?: Record<string, string>;
   Units?: Record<string, string>;
-}
-
-interface PeopleUltraConfig extends PlatformConfig {
-  anyoneSensor?: boolean;
-  anyoneSensorName?: string;
-  anyoneSensorType?: SensorType;
-  nooneSensor?: boolean;
-  nooneSensorName?: string;
-  nooneSensorType?: SensorType;
-  webhookEnabled?: boolean;
-  webhookPort?: number;
-  threshold?: number;
-  pingInterval?: number;
-  people?: PersonConfig[];
-}
-
-interface PersonConfig {
-  name?: string;
-  target?: string;
-  enableCustomDns?: boolean;
-  customDns?: string[] | string;
-  type?: SensorType;
-  threshold?: number;
-  pingInterval?: number;
-  pingUseArp?: boolean;
-  excludeFromWebhook?: boolean;
-  ignoreWebhookReEnter?: number;
 }
 
 interface WebhookQueueEntry {
@@ -114,19 +89,20 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
   }
 
   getAnyoneStateFromCache(): boolean {
+    return anyoneActive(this.personStates());
+  }
+
+  private *personStates(): Iterable<boolean> {
     for (const accessory of this.personAccessories.values()) {
-      if (accessory.stateCache) {
-        return true;
-      }
+      yield accessory.stateCache;
     }
-    return false;
   }
 
   private discoverDevices() {
     this.personAccessories.clear();
     this.aggregateAccessories.clear();
     this.discoveredCacheUUIDs.clear();
-    const devices = this.getConfiguredDevices();
+    const devices = getConfiguredDevices(this.pluginConfig, this.log);
 
     for (const device of devices) {
       const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${device.kind}:${device.id}`);
@@ -157,76 +133,6 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
         this.accessories.delete(uuid);
       }
     }
-  }
-
-  private getConfiguredDevices(): PeopleUltraDevice[] {
-    const people = Array.isArray(this.pluginConfig.people) ? this.pluginConfig.people : [];
-    const devices: PeopleUltraDevice[] = people.map((person, index) => this.normalizePerson(person, index));
-
-    if (this.pluginConfig.anyoneSensor === true) {
-      devices.push({
-        kind: 'aggregate',
-        aggregateType: 'anyone',
-        id: 'anyone',
-        name: this.pluginConfig.anyoneSensorName || 'Anyone',
-        type: this.normalizeSensorType(this.pluginConfig.anyoneSensorType, 'Anyone'),
-      });
-    }
-
-    if (this.pluginConfig.nooneSensor === true) {
-      devices.push({
-        kind: 'aggregate',
-        aggregateType: 'noone',
-        id: 'noone',
-        name: this.pluginConfig.nooneSensorName || 'No One',
-        type: this.normalizeSensorType(this.pluginConfig.nooneSensorType, 'No One'),
-      });
-    }
-
-    return devices;
-  }
-
-  private normalizePerson(person: PersonConfig, index: number): PersonDevice {
-    const name = person.name || `People Sensor ${index + 1}`;
-    const target = person.target || '127.0.0.1';
-
-    if (!person.target) {
-      this.log.warn('No target was given for %s. Defaulting to 127.0.0.1.', name);
-    }
-
-    return {
-      kind: 'person',
-      id: `${name}:${target}`,
-      name,
-      target,
-      type: this.normalizeSensorType(person.type, name),
-      threshold: person.threshold || this.pluginConfig.threshold || 15,
-      pingInterval: person.pingInterval ?? this.pluginConfig.pingInterval ?? 10000,
-      pingUseArp: person.pingUseArp ?? false,
-      customDns: this.normalizeCustomDns(person),
-      excludeFromWebhook: person.excludeFromWebhook ?? false,
-      ignoreWebhookReEnter: person.ignoreWebhookReEnter ?? 0,
-    };
-  }
-
-  private normalizeSensorType(type: SensorType | undefined, sensorName: string): SensorType {
-    if (type === 'motion' || type === 'occupancy') {
-      return type;
-    }
-
-    if (type !== undefined) {
-      this.log.warn('Type "%s" for sensor %s is invalid. Defaulting to motion.', type, sensorName);
-    }
-
-    return 'motion';
-  }
-
-  private normalizeCustomDns(person: PersonConfig): string[] | false {
-    if (person.enableCustomDns === false || !person.customDns) {
-      return false;
-    }
-
-    return Array.isArray(person.customDns) ? person.customDns : [person.customDns];
   }
 
   private startServer() {

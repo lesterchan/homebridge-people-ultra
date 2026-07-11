@@ -8,6 +8,7 @@ import find from 'local-devices';
 
 import type { PeopleUltraPlatform } from './platform.js';
 import * as presence from './presence.js';
+import { aggregateState } from './aggregate.js';
 
 export type SensorType = 'motion' | 'occupancy';
 
@@ -247,8 +248,7 @@ export class PeopleUltraPlatformAccessory {
 
   private getStateFromCache(): boolean {
     if (this.device.kind === 'aggregate') {
-      const anyoneActive = this.platform.getAnyoneStateFromCache();
-      return this.device.aggregateType === 'noone' ? !anyoneActive : anyoneActive;
+      return aggregateState(this.platform.getAnyoneStateFromCache(), this.device.aggregateType);
     }
 
     return this.stateCache;
