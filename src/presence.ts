@@ -12,6 +12,18 @@ export function thresholdMs(thresholdMinutes: number): number {
   return thresholdMinutes * 60 * 1000;
 }
 
+/**
+ * Eve "LastActivation" value: seconds since the fakegato history epoch. Returns
+ * 0 when there is no ping timestamp yet.
+ */
+export function lastActivationSeconds(lastSuccessfulPing: number | undefined, initialTimeSeconds: number): number {
+  if (!lastSuccessfulPing) {
+    return 0;
+  }
+
+  return Math.floor(lastSuccessfulPing / 1000) - initialTimeSeconds;
+}
+
 /** True when the most recent successful ping is within the threshold window. */
 export function isActive(lastSuccessfulPing: number | undefined, thresholdMinutes: number, now: number): boolean {
   if (!lastSuccessfulPing) {

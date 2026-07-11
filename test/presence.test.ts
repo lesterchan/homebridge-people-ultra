@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   isActive,
+  lastActivationSeconds,
   successfulPingOccurredAfterWebhook,
   thresholdMs,
   webhookIsOutdated,
@@ -56,4 +57,18 @@ test('successfulPingOccurredAfterWebhook compares timestamps', () => {
   assert.equal(successfulPingOccurredAfterWebhook(NOW, NOW - 1), true);
   assert.equal(successfulPingOccurredAfterWebhook(NOW - 1, NOW), false);
   assert.equal(successfulPingOccurredAfterWebhook(NOW, NOW), false);
+});
+
+test('lastActivationSeconds is 0 when there is no ping timestamp', () => {
+  assert.equal(lastActivationSeconds(undefined, 100), 0);
+  assert.equal(lastActivationSeconds(0, 100), 0);
+});
+
+test('lastActivationSeconds returns seconds since the history epoch', () => {
+  // 1_000_000 ms = 1000 s; minus an epoch of 100 s => 900.
+  assert.equal(lastActivationSeconds(1_000_000, 100), 900);
+});
+
+test('lastActivationSeconds floors sub-second ping timestamps', () => {
+  assert.equal(lastActivationSeconds(1_500, 0), 1); // floor(1.5) = 1
 });

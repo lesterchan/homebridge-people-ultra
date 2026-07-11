@@ -1,6 +1,9 @@
 # homebridge-people-ultra
 
-The People Ultra Homebridge plugin creates HomeKit presence sensors for people or devices on your local network. It is a TypeScript port of the now archived [homebridge-people-pro](https://github.com/mfkrause/homebridge-people-pro). The port is done by Codex on GPT 5.5 and is based on [homebridge-plugin-template](https://github.com/homebridge/homebridge-plugin-template).
+[![Build, Lint and Test](https://github.com/lesterchan/homebridge-people-ultra/actions/workflows/build.yml/badge.svg)](https://github.com/lesterchan/homebridge-people-ultra/actions/workflows/build.yml)
+[![npm version](https://img.shields.io/npm/v/homebridge-people-ultra.svg)](https://www.npmjs.com/package/homebridge-people-ultra)
+
+The People Ultra Homebridge plugin creates HomeKit presence sensors for people or devices on your local network. It is a TypeScript port of the now archived [homebridge-people-pro](https://github.com/mfkrause/homebridge-people-pro). Ported by OpenAI GPT, refactored by Claude Code (Opus 4.8), and based on [homebridge-plugin-template](https://github.com/homebridge/homebridge-plugin-template).
 
 The plugin can monitor targets by IP address, hostname, or MAC address. It can also run an optional webhook server for location-aware mobile apps such as Locative, and motion sensors can expose Eve history through fakegato.
 
@@ -99,11 +102,22 @@ The `sensor` value must match the configured person's `name`. A successful webho
 
 ```shell
 npm install
-npm run build
-npm run lint
+npm run lint        # ESLint (--max-warnings=0)
+npm run typecheck   # type-check src + test (tsc --noEmit)
+npm test            # run the unit tests
+npm run build       # compile src -> dist
 ```
 
-For local Homebridge testing:
+Unit tests use Node's built-in [`node:test`](https://nodejs.org/api/test.html) runner via the [`tsx`](https://tsx.is) loader and live in `test/*.test.ts`. They cover the pure logic modules — config normalization, presence predicates, aggregate derivation, webhook parsing, and persistence. Run `npm run test:coverage` for a coverage report.
+
+```shell
+npm test
+npm run test:coverage
+```
+
+CI ([`.github/workflows/build.yml`](.github/workflows/build.yml)) runs lint, type-check, build, and tests on Node 22.x and 24.x for every push and pull request.
+
+For local Homebridge testing (exercises the real network probes, HAP wiring, and webhook server that unit tests do not cover):
 
 ```shell
 npm run watch

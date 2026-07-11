@@ -25,9 +25,11 @@
   "scripts": {
     "build": "rimraf ./dist && tsc",
     "lint": "eslint . --max-warnings=0",
-    "prepublishOnly": "npm run lint && npm run build",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run build",
     "watch": "npm run build && npm link && nodemon",
-    "test": "node --import tsx --test \"test/**/*.test.ts\""
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "test:coverage": "node --import tsx --test --experimental-test-coverage \"test/**/*.test.ts\""
   },
   "dependencies": {
     "fakegato-history": "^0.5.6",

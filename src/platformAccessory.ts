@@ -277,12 +277,12 @@ export class PeopleUltraPlatformAccessory {
       return 0;
     }
 
-    const lastSeen = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
-    if (!lastSeen || !this.historyService) {
+    if (!this.historyService) {
       return 0;
     }
 
-    return Math.floor(lastSeen / 1000) - this.historyService.getInitialTime();
+    const lastSeen = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
+    return presence.lastActivationSeconds(lastSeen, this.historyService.getInitialTime());
   }
 
   private isActive(): boolean {

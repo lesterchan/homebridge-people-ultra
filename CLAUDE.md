@@ -6,10 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `npm run build` — `rimraf ./dist && tsc`. Compiles `src/` → `dist/`. Always run after source changes.
 - `npm run lint` — ESLint with `--max-warnings=0`. CI enforces this; do not bypass.
+- `npm run typecheck` — `tsc -p tsconfig.test.json` (`--noEmit` over `src` **and** `test`). The normal build only compiles `src`, so this is what type-checks the test files.
+- `npm test` — runs the `node:test` suites in `test/` via the `tsx` loader. No build step needed.
+- `npm run test:coverage` — same as `npm test` with `--experimental-test-coverage`.
 - `npm run watch` — builds, runs `npm link`, then starts nodemon (restarts Homebridge on `.ts` file changes). Uses `test/hbConfig/config.json` as the Homebridge config.
-- `npm run prepublishOnly` — runs `lint` then `build`. Runs automatically before `npm publish`.
+- `npm run prepublishOnly` — runs `lint`, `typecheck`, `test`, then `build`. Runs automatically before `npm publish`.
 
-There is no test suite. Verification is done by running Homebridge locally via `npm run watch`.
+CI (`.github/workflows/build.yml`) runs lint → typecheck → build → coverage on Node 22.x and 24.x. Unit tests cover the pure logic modules (see Testing below); end-to-end behavior (real network probes, HAP wiring, the webhook server) is still verified by running Homebridge locally via `npm run watch`.
 
 ## Architecture
 
@@ -28,6 +31,10 @@ Each configured "person" becomes a HomeKit Motion or Occupancy sensor. Two optio
 | `src/platform.ts`                       | `PeopleUltraPlatform` — device discovery, webhook server, aggregate refresh |
 | `src/platformAccessory.ts`              | `PeopleUltraPlatformAccessory` — polling, ping/ARP probes, state management |
 | `src/persistence.ts`                    | `PersistenceStore` — JSON file for timestamps, debounced writes             |
+| `src/config.ts`                         | Pure config normalization — `getConfiguredDevices`, defaulting, aggregates  |
+| `src/presence.ts`                       | Pure presence predicates — `isActive`, `webhookIsOutdated`, `lastActivationSeconds` |
+| `src/aggregate.ts`                      | Pure aggregate derivation — `anyoneActive`, `aggregateState`                |
+| `src/webhook.ts`                        | Pure webhook parsing + sensor matching — `parseWebhookRequest`, `matchSensor` |
 | `src/@types/presence-dependencies.d.ts` | Type declarations for `ping`, `node-arp`, and `local-devices`               |
 
 ### Device model
@@ -100,7 +107,7 @@ Returns `404` with `{ success: false }` if the sensor name is not found.
 
 Motion sensors (not occupancy) expose three custom Eve characteristics via `configureEveMotionCharacteristics`:
 
-- `LastActivation` (`E863F11A`) — seconds since epoch of last ping, offset by `historyService.getInitialTime()`.
+- `LastActivation` (`E863F11A`) — seconds since epoch of last ping, offset by `historyService.getInitialTime()` (computed by `presence.lastActivationSeconds()`).
 - `Sensitivity` (`E863F120`) — constant `4`.
 - `Duration` (`E863F12D`) — constant `5`.
 
@@ -111,6 +118,17 @@ The three Eve characteristic classes are defined lazily and cached in `PeopleUlt
 ### Persistence
 
 `PersistenceStore` reads and writes a single JSON file at `<storagePath>/plugin-persist/homebridge-people-ultra/state.json`. All values are numbers (millisecond timestamps). Writes are debounced 500 ms to avoid blocking the event loop on rapid ping updates.
+
+### Testing
+
+Unit tests live in `test/*.test.ts` and use Node's built-in `node:test` runner, executed through the `tsx` loader (no separate build). They cover the **pure logic modules** only — `config.ts`, `presence.ts`, `aggregate.ts`, `webhook.ts`, and `persistence.ts` — which is why that logic was extracted out of the Homebridge-coupled classes in the first place.
+
+- Keep these modules free of Homebridge/HAP imports so they stay testable in isolation. `platform.ts` / `platformAccessory.ts` pass in plain values (stored timestamps, config objects, `Date.now()`, `getInitialTime()`) and consume the results.
+- When you change presence, config, aggregate, or webhook behavior, add or update a test alongside it.
+- Test files are **not** part of the `tsc` build (`tsconfig.json` only includes `src`); `npm run typecheck` (via `tsconfig.test.json`) is what type-checks them, and CI runs it.
+- The `PersistenceStore` write test uses `node:test` fake timers (`mock.timers`) to fast-forward the 500 ms debounce.
+
+Network probes, the webhook HTTP server, HAP wiring, and fakegato history are **not** unit-tested — verify those by running Homebridge locally (`npm run watch`).
 
 ## Conventions
 

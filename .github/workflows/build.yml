@@ -26,11 +26,14 @@ jobs:
       - name: Lint the project
         run: npm run lint
 
+      - name: Type-check sources and tests
+        run: npm run typecheck
+
       - name: Build the project
         run: npm run build
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
       - name: List, audit, fix outdated dependencies and build again
         run: |

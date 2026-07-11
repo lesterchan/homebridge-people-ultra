@@ -7,6 +7,7 @@ import type { API, Characteristic, DynamicPlatformPlugin, Logging, PlatformAcces
 import { PeopleUltraPlatformAccessory, type PeopleUltraDevice, type PersonDevice } from './platformAccessory.js';
 import { getConfiguredDevices, type PeopleUltraConfig } from './config.js';
 import { anyoneActive } from './aggregate.js';
+import { matchSensor, parseWebhookRequest } from './webhook.js';
 import { PersistenceStore } from './persistence.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
@@ -151,39 +152,35 @@ export class PeopleUltraPlatform implements DynamicPlatformPlugin {
   }
 
   private handleWebhook(request: IncomingMessage, response: ServerResponse) {
-    const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-    const sensor = requestUrl.searchParams.get('sensor');
-    const state = requestUrl.searchParams.get('state');
+    const parsed = parseWebhookRequest(request.url, request.headers.host);
 
-    if (!sensor || state === null) {
+    if (!parsed) {
       response.writeHead(404, { 'Content-Type': 'text/plain' });
       response.end('Webhook error: No sensor or state specified in request.');
       return;
     }
 
-    const newState = state === 'true';
-    this.log.info('Received webhook for %s -> %s', sensor.toLowerCase(), newState);
+    this.log.info('Received webhook for %s -> %s', parsed.sensor.toLowerCase(), parsed.newState);
 
-    let found = false;
-    for (const accessory of this.personAccessories.values()) {
-      const device = accessory.device as PersonDevice;
-      if (device.name.toLowerCase() === sensor.toLowerCase()) {
-        found = true;
-        if (device.excludeFromWebhook !== true) {
-          this.queueWebhook(device, newState);
-        }
-        break;
-      }
+    const device = matchSensor(this.personDevices(), parsed.sensor);
+    if (!device) {
+      response.writeHead(404, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ success: false, error: `No sensor found matching "${parsed.sensor}".` }));
+      return;
     }
 
-    if (!found) {
-      response.writeHead(404, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ success: false, error: `No sensor found matching "${sensor}".` }));
-      return;
+    if (device.excludeFromWebhook !== true) {
+      this.queueWebhook(device, parsed.newState);
     }
 
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ success: true }));
+  }
+
+  private *personDevices(): Iterable<PersonDevice> {
+    for (const accessory of this.personAccessories.values()) {
+      yield accessory.device as PersonDevice;
+    }
   }
 
   private queueWebhook(device: PersonDevice, newState: boolean) {
