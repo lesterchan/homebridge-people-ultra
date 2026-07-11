@@ -7,6 +7,7 @@ import ping from 'ping';
 import find from 'local-devices';
 
 import type { PeopleUltraPlatform } from './platform.js';
+import * as presence from './presence.js';
 
 export type SensorType = 'motion' | 'occupancy';
 
@@ -290,11 +291,7 @@ export class PeopleUltraPlatformAccessory {
     }
 
     const lastSeen = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
-    if (!lastSeen) {
-      return false;
-    }
-
-    return lastSeen > Date.now() - (this.device.threshold * 60 * 1000);
+    return presence.isActive(lastSeen, this.device.threshold, Date.now());
   }
 
   private schedulePoll(delay: number) {
@@ -321,6 +318,7 @@ export class PeopleUltraPlatformAccessory {
         const target = await this.resolveTarget();
         if (target) {
           const state = this.device.pingUseArp ? await this.arpProbe(target) : await this.pingProbe(target);
+          this.platform.log.debug('Presence check for %s (%s) via %s -> %s', this.device.target, target, this.device.pingUseArp ? 'arp' : 'ping', state);
           if (this.webhookIsOutdated()) {
             if (state) {
               this.platform.storage.setNumber(`lastSuccessfulPing_${this.device.target}`, Date.now());
@@ -384,11 +382,7 @@ export class PeopleUltraPlatformAccessory {
     }
 
     const lastWebhook = this.platform.storage.getNumber(`lastWebhook_${this.device.target}`);
-    if (!lastWebhook) {
-      return true;
-    }
-
-    return lastWebhook < Date.now() - (this.device.threshold * 60 * 1000);
+    return presence.webhookIsOutdated(lastWebhook, this.device.threshold, Date.now());
   }
 
   private successfulPingOccurredAfterWebhook(): boolean {
@@ -397,11 +391,7 @@ export class PeopleUltraPlatformAccessory {
     }
 
     const lastSuccessfulPing = this.platform.storage.getNumber(`lastSuccessfulPing_${this.device.target}`);
-    if (!lastSuccessfulPing) {
-      return false;
-    }
-
     const lastWebhook = this.platform.storage.getNumber(`lastWebhook_${this.device.target}`);
-    return !lastWebhook || lastSuccessfulPing > lastWebhook;
+    return presence.successfulPingOccurredAfterWebhook(lastSuccessfulPing, lastWebhook);
   }
 }
